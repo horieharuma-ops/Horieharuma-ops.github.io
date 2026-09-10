@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Solar System Simulator</title>
+<style>
+:root{--bg:#03050b;--panel:rgba(10,15,27,.88);--line:#26334e;--text:#eef4ff;--muted:#91a1bd;--accent:#79a8ff}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,Segoe UI,sans-serif}
+#app{width:100%;height:100%;position:relative}canvas{display:block;width:100%;height:100%}
+#top{position:absolute;left:16px;right:16px;top:14px;display:flex;gap:10px;align-items:center;pointer-events:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px #0008;backdrop-filter:blur(10px)}
+#title{padding:10px 14px;font-weight:700;letter-spacing:.3px}#date{padding:10px 14px;color:var(--muted)}
+#controls{position:absolute;left:16px;bottom:16px;width:min(410px,calc(100% - 32px));padding:14px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.row:last-child{margin:0}
+button,select,input{font:inherit}button,select{background:#121a2b;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+button{cursor:pointer}button:hover{border-color:#4c6593;background:#18233a}.primary{background:#315ea8;border-color:#4b79c5}
+label{color:var(--muted)}input[type=range]{width:170px;accent-color:var(--accent)}
+#info{position:absolute;right:16px;bottom:16px;width:min(290px,calc(100% - 32px));padding:14px}
+#info h2{font-size:18px;margin:0 0 6px}.stat{display:flex;justify-content:space-between;border-top:1px solid #ffffff10;padding:6px 0;color:var(--muted)}.stat b{color:var(--text);font-weight:600}
+#hint{position:absolute;top:60px;left:50%;transform:translateX(-50%);padding:8px 12px;color:var(--muted);font-size:12px;pointer-events:none}
+.hidden{display:none!important}
+.presentation #controls,.presentation #info{display:none}.presentation #top{opacity:.9}
+#pres{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:35px;pointer-events:none}.caption{max-width:760px;text-align:center;background:#03050bcc;border:1px solid #ffffff18;border-radius:16px;padding:18px 24px;backdrop-filter:blur(8px)}.caption h1{margin:0 0 5px;font-size:30px}.caption p{margin:0;color:#b8c5db}
+@media(max-width:700px){#date{display:none}#info{top:60px;bottom:auto;width:210px}.stat{font-size:12px}#controls{bottom:10px;left:10px}}
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="space"></canvas>
+<div id="top"><div id="title" class="card">Solar System Simulator</div><div id="date" class="card"></div></div>
+<div id="hint" class="card">Drag to rotate view · Wheel/pinch to zoom · Click a planet to focus</div>
+<div id="controls" class="card">
+  <div class="row">
+    <button id="pause" class="primary">Pause</button>
+    <button id="now">Now</button>
+    <button id="reset">Reset View</button>
+    <button id="presentation">Presentation</button>
+  </div>
+  <div class="row">
+    <label>Time speed</label><input id="speed" type="range" min="-4" max="6" step=".1" value="1">
+    <b id="speedLabel">1×</b>
+  </div>
+  <div class="row">
+    <label>Focus</label><select id="focus"><option value="overview">Solar System</option></select>
+    <label><input id="orbits" type="checkbox" checked> Orbits</label>
+    <label><input id="labels" type="checkbox" checked> Labels</label>
+  </div>
+  <div class="row">
+    <button id="viewLeft" title="Rotate left">◀ View</button>
+    <button id="viewRight" title="Rotate right">View ▶</button>
+    <button id="viewUp" title="Tilt upward">▲ Tilt</button>
+    <button id="viewDown" title="Tilt downward">▼ Tilt</button>
+    <button id="topView" title="Look directly down on the orbital plane">Overhead</button>
+  </div>
+  <div class="row">
+    <button id="zoomOut" title="Zoom out">−</button>
+    <input id="zoom" type="range" min="0.25" max="20" step="0.01" value="1">
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomReset">Reset Zoom</button>
+    <b id="zoomLabel">100%</b>
+  </div>
+</div>
+<div id="info" class="card">
+  <h2 id="infoName">Solar System</h2><div id="infoDesc" style="color:var(--muted);margin-bottom:7px">Click a planet or moon for details.</div>
+  <div class="stat"><span>Distance</span><b id="distance">—</b></div>
+  <div class="stat"><span>Orbital period</span><b id="period">—</b></div>
+  <div class="stat"><span>Diameter</span><b id="diameter">—</b></div>
+</div>
+<div id="pres" class="hidden"><div class="caption"><h1 id="presTitle"></h1><p id="presText"></p></div></div>
+</div>
+<script>
+const canvas=document.getElementById('space'),ctx=canvas.getContext('2d');
+const TAU=Math.PI*2, AU=149597870.7, DAY=86400;
+let W,H,dpr,paused=false,simDays=0,scale=1,zoomFactor=1,rotX=.35,rotY=-.45,drag=false,lx=0,ly=0,focus='overview',last=performance.now();
+const EPOCH=Date.UTC(2000,0,1);
+
+const bodies=[
+ {id:'mercury',name:'Mercury',type:'planet',a:.387,e:.206,period:87.97,size:0,color:'#aaa28f',desc:'The smallest planet and the closest to the Sun.',diam:4879},
+ {id:'venus',name:'Venus',type:'planet',a:.723,e:.007,period:224.70,size:0,color:'#d7ae68',desc:'A cloud-shrouded world with an extreme greenhouse effect.',diam:12104},
+ {id:'earth',name:'Earth',type:'planet',a:1,e:.017,period:365.25,size:0,color:'#4d8ed8',desc:'Our home world, with liquid surface oceans.',diam:12742},
+ {id:'mars',name:'Mars',type:'planet',a:1.524,e:.093,period:686.98,size:0,color:'#c75d45',desc:'The red planet, home to Olympus Mons and Valles Marineris.',diam:6779},
+ {id:'jupiter',name:'Jupiter',type:'planet',a:5.203,e:.049,period:4332.59,size:0,color:'#c69d76',desc:'The largest planet, a gas giant with a Great Red Spot.',diam:139820},
+ {id:'saturn',name:'Saturn',type:'planet',a:9.537,e:.057,period:10759.22,size:0,color:'#d6c08b',rings:true,desc:'A gas giant famous for its spectacular ring system.',diam:116460},
+ {id:'uranus',name:'Uranus',type:'planet',a:19.191,e:.046,period:30688.5,size:0,color:'#80d6db',desc:'An ice giant rotating on its side.',diam:50724},
+ {id:'neptune',name:'Neptune',type:'planet',a:30.07,e:.010,period:60182,size:0,color:'#4f70d6',desc:'A distant ice giant with extremely fast winds.',diam:49244},
+ {id:'moon',name:'Moon',type:'moon',parent:'earth',a:.00257,e:.055,period:27.32,size:0,color:'#c5c8cf',desc:'Earth’s natural satellite.',diam:3475},
+ {id:'io',name:'Io',type:'moon',parent:'jupiter',a:.00282,e:.004,period:1.769,size:0,color:'#e6c35c',desc:'Volcanically active moon of Jupiter.',diam:3643},
+ {id:'europa',name:'Europa',type:'moon',parent:'jupiter',a:.00449,e:.009,period:3.551,size:0,color:'#c8c5a8',desc:'An icy moon thought to hide a global ocean.',diam:3122},
+ {id:'ganymede',name:'Ganymede',type:'moon',parent:'jupiter',a:.00716,e:.001,period:7.155,size:0,color:'#9e9a91',desc:'The largest moon in the Solar System.',diam:5268},
+ {id:'callisto',name:'Callisto',type:'moon',parent:'jupiter',a:.01259,e:.007,period:16.689,size:0,color:'#77736b',desc:'A heavily cratered outer moon of Jupiter.',diam:4821},
+ {id:'titan',name:'Titan',type:'moon',parent:'saturn',a:.00817,e:.029,period:15.945,size:0,color:'#d5a451',desc:'Saturn’s largest moon, with a thick atmosphere.',diam:5149},
+ {id:'enceladus',name:'Enceladus',type:'moon',parent:'saturn',a:.00159,e:.005,period:1.370,size:0,color:'#e9edf2',desc:'A bright icy moon with water-rich plumes.',diam:504},
+ {id:'triton',name:'Triton',type:'moon',parent:'neptune',a:.00237,e:.00002,period:5.877,retro:true,size:0,color:'#d8c7bd',desc:'Neptune’s large retrograde moon.',diam:2707}
+];
+const byId=Object.fromEntries(bodies.map(b=>[b.id,b]));
+const focusSel=document.getElementById('focus');
+bodies.filter(b=>b.type==='planet').forEach(b=>focusSel.add(new Option(b.name,b.id)));
+bodies.filter(b=>b.type==='moon').forEach(b=>focusSel.add(new Option(b.name,b.id)));
+
+function resize(){dpr=devicePixelRatio||1;W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+
+function pos(b){
+ let parent={x:0,y:0};
+ if(b.parent){let p=pos(byId[b.parent]);parent={x:p.x,y:p.y}}
+ let n=simDays/b.period*TAU*(b.retro?-1:1),r=b.a*(1-b.e*b.e)/(1+b.e*Math.cos(n));
+ return {x:parent.x+r*Math.cos(n),y:parent.y+r*Math.sin(n)};
+}
+function getCameraCenter(){
+  if(focus==='overview') return {x:0,y:0};
+  const b=byId[focus];
+  if(!b) return {x:0,y:0};
+  const p=pos(b);
+  return {x:p.x,y:p.y};
+}
+function project(x,y){
+ const center=getCameraCenter();
+ x-=center.x; y-=center.y;
+ const cy=Math.cos(rotY),sy=Math.sin(rotY),cx=Math.cos(rotX),sx=Math.sin(rotX);
+ const X=x*cy;
+ const Z=x*sy;
+ const Y=y*cx-Z*sx;
+ const Z2=y*sx+Z*cx;
+ return {x:W/2+X*scale,y:H/2+Y*scale,depth:Z2};
+}
+function getBaseScale(){
+  // True AU distances. Keep the whole planetary system comfortably inside the
+  // overview at 100%, while close-up uses a separate, wider camera.
+  return focus==='overview' ? Math.min(W,H)/78 : Math.min(W,H)/8;
+}
+function getScale(){
+  // Zoom is a camera magnification only. It is never allowed to jump to a
+  // value different from the value shown by the control. A moderate range
+  // keeps the overview usable while still allowing a useful close-up.
+  return getBaseScale()*zoomFactor;
+}
+function radiusAU(b){ return (b.diam/1000)/(2*AU); }
+const BODY_VISUAL_SCALE=2500;
+function bodyRadiusPx(b){ return Math.max(.65, radiusAU(b)*scale*BODY_VISUAL_SCALE); }
+function drawStars(){
+ ctx.fillStyle='#03050b';ctx.fillRect(0,0,W,H);
+ for(let i=0;i<260;i++){let x=(i*928371)%W,y=(i*471113)%H,r=((i*17)%10)/10+.2;ctx.fillStyle=`rgba(255,255,255,${.2+((i*37)%60)/100})`;ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill()}
+}
+function drawSun(){
+  const r=radiusAU({diam:1391400})*scale*BODY_VISUAL_SCALE;
+  const p=project(0,0);
+  ctx.beginPath();ctx.arc(p.x,p.y,r,0,TAU);
+  ctx.fillStyle='#ffd66b';ctx.shadowColor='#ffb52e';ctx.shadowBlur=Math.max(2,Math.min(40,r*.7));ctx.fill();ctx.shadowBlur=0;
+  if(document.getElementById('labels').checked){
+    ctx.fillStyle='#fff0bd';ctx.textAlign='center';ctx.fillText('Sun',p.x,p.y-r-9);
+  }
+}
+function visualPlanetPos(b){ return pos(b); }
+function orbitFor(b){
+ if(b.type==='moon')return;
+ ctx.beginPath();
+ for(let i=0;i<=720;i++){
+   const n=i/720*TAU;
+   const r=b.a*(1-b.e*b.e)/(1+b.e*Math.cos(n));
+   const p=project(r*Math.cos(n),r*Math.sin(n));
+   i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);
+ }
+ ctx.strokeStyle='#26334e';ctx.lineWidth=1;ctx.stroke();
+}
+function bodyScreen(b){
+  const p=pos(b);
+  return project(p.x,p.y);
+}
+function drawBody(b){
+ let p=bodyScreen(b),s=bodyRadiusPx(b)*(focus===b.id?1.45:1);
+ ctx.save();ctx.translate(p.x,p.y);
+ ctx.beginPath();ctx.arc(0,0,s,0,TAU);ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=focus===b.id?14:5;ctx.fill();ctx.shadowBlur=0;
+ if(b.rings){ctx.rotate(-.25);ctx.strokeStyle='#d7c49b99';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(0,0,s*1.9,s*.65,0,0,TAU);ctx.stroke();ctx.strokeStyle='#8c7c5d99';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(0,0,s*1.45,s*.48,0,0,TAU);ctx.stroke()}
+ ctx.restore();
+ if(document.getElementById('labels').checked){ctx.fillStyle='#dce6f7';ctx.font='12px system-ui';ctx.textAlign='center';ctx.fillText(b.name,p.x,p.y-s-5)}
+}
+function render(){
+ drawStars();
+ scale=getScale();
+ // overview uses true AU distances
+ if(focus==='overview'){
+   drawSun();
+   if(document.getElementById('orbits').checked)bodies.filter(b=>b.type==='planet').forEach(orbitFor);
+   bodies.forEach(b=>{if(b.type==='planet'){const q=visualPlanetPos(b);const p=project(q.x,q.y);drawAt(b,p)}});
+ }else{
+   if(document.getElementById('orbits').checked && byId[focus].type==='planet')orbitFor(byId[focus]);
+   // local-system view
+   bodies.filter(b=>b.type==='planet').forEach(b=>{if(b.id!==focus){let p=bodyScreen(b);drawBody(b)}});
+   drawBody(byId[focus]);
+   bodies.filter(b=>b.type==='moon').forEach(drawBody);
+ }
+ updateInfo();requestAnimationFrame(render);
+}
+function drawAt(b,p){
+ let s=bodyRadiusPx(b);ctx.beginPath();ctx.arc(p.x,p.y,s,0,TAU);ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=5;ctx.fill();ctx.shadowBlur=0;
+ if(b.rings){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(-.25);ctx.strokeStyle='#d7c49b99';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(0,0,s*1.9,s*.65,0,0,TAU);ctx.stroke();ctx.restore()}
+ if(document.getElementById('labels').checked){ctx.fillStyle='#dce6f7';ctx.font='12px system-ui';ctx.textAlign='center';ctx.fillText(b.name,p.x,p.y-s-5)}
+}
+function updateInfo(){
+ let b=focus==='overview'?null:byId[focus];
+ document.getElementById('infoName').textContent=b?b.name:'Solar System';
+ document.getElementById('infoDesc').textContent=b?b.desc:'Click a planet or moon for details.';
+ document.getElementById('distance').textContent=b?(b.type==='moon'?`Moon orbit`:`${b.a} AU`):'—';
+ document.getElementById('period').textContent=b?`${b.period.toLocaleString()} days`:'—';
+ document.getElementById('diameter').textContent=b?`${b.diam.toLocaleString()} km`:'—';
+ document.getElementById('date').textContent=`Simulation date: ${new Date(EPOCH+simDays*DAY).toISOString().slice(0,10)}`;
+}
+function simulationRate(){
+  const v=Number(document.getElementById('speed').value);
+  if(!Number.isFinite(v) || v===0)return 0;
+  return 20*Math.sign(v)*Math.pow(2,Math.abs(v));
+}
+function updateSpeedLabel(){
+  const v=Number(document.getElementById('speed').value);
+  if(v===0){document.getElementById('speedLabel').textContent='Paused';return;}
+  const rate=simulationRate();
+  const mag=Math.abs(rate);
+  const text=mag<10?mag.toFixed(2).replace(/0+$/,'').replace(/\.$/,''):mag.toFixed(0);
+  document.getElementById('speedLabel').textContent=(rate<0?'−':'')+text+' d/s';
+}
+function tick(t){
+  if(!Number.isFinite(t)) t=performance.now();
+  let dt=(t-last)/1000;
+  last=t;
+  // Prevent a suspended/background tab from jumping the simulation by hours.
+  dt=Math.max(0,Math.min(dt,0.25));
+  if(!paused){
+    simDays+=dt*simulationRate();
+  }
+  requestAnimationFrame(tick);
+}
+pause.onclick=()=>{
+  paused=!paused;
+  pause.textContent=paused?'Play':'Pause';
+  last=performance.now();
+};
+speed.oninput=()=>updateSpeedLabel();
+now.onclick=()=>{
+  simDays=(Date.now()-EPOCH)/DAY;
+  last=performance.now();
+};
+reset.onclick=()=>{
+  focus='overview';
+  focusSel.value='overview';
+  rotX=.35;
+  rotY=-.45;
+  zoomFactor=1;
+  last=performance.now();
+  syncZoom();
+};
+focusSel.onchange=e=>{
+  focus=e.target.value;
+  if(focus!=='overview'){
+    zoomFactor=1;
+    syncZoom();
+  }
+};
+presentation.onclick=()=>{document.body.classList.toggle('presentation');pres.classList.toggle('hidden');presentation.textContent=document.body.classList.contains('presentation')?'Exit Presentation':'Presentation';if(focus!=='overview'){presTitle.textContent=byId[focus].name;presText.textContent=byId[focus].desc}else{presTitle.textContent='The Solar System';presText.textContent='Explore the planets and key moons, change the flow of time, and focus on individual worlds.'}};
+canvas.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener('pointermove',e=>{if(!drag)return;rotY+=(e.clientX-lx)*.006;rotX+=(e.clientY-ly)*.006;lx=e.clientX;ly=e.clientY});
+canvas.addEventListener('pointerup',()=>drag=false);
+canvas.addEventListener('pointercancel',()=>drag=false);
+canvas.addEventListener('wheel',e=>{e.preventDefault();zoomFactor*=Math.exp(-e.deltaY*.0015);zoomFactor=Math.max(.25,Math.min(20,zoomFactor));syncZoom()},{passive:false});
+
+function syncZoom(){
+  zoomFactor=Math.max(.25,Math.min(20,zoomFactor));
+  zoom.value=zoomFactor;
+  zoomLabel.textContent=(zoomFactor<10?zoomFactor.toFixed(2):zoomFactor.toFixed(1))+'×';
+}
+function rotateView(dx,dy){
+  rotY+=dx;
+  rotX+=dy;
+  rotX=Math.max(-Math.PI/2,Math.min(Math.PI/2,rotX));
+}
+viewLeft.onclick=()=>rotateView(-.18,0);
+viewRight.onclick=()=>rotateView(.18,0);
+viewUp.onclick=()=>rotateView(0,-.14);
+viewDown.onclick=()=>rotateView(0,.14);
+topView.onclick=()=>{
+  // Directly overhead: view perpendicular to the orbital plane.
+  rotX=0;
+  rotY=0;
+};
+zoomIn.onclick=()=>{
+  zoomFactor=Math.min(20,zoomFactor*1.25);
+  syncZoom();
+};
+zoomOut.onclick=()=>{
+  zoomFactor=Math.max(.25,zoomFactor/1.25);
+  syncZoom();
+};
+zoom.oninput=()=>{
+  zoomFactor=Number(zoom.value);
+  syncZoom();
+};
+zoomReset.onclick=()=>{
+  zoomFactor=1;
+  syncZoom();
+};
+
+canvas.addEventListener('click',e=>{
+ if(drag)return;
+ let hit=null,md=24;
+ for(const b of bodies){const p=bodyScreen(b),d=Math.hypot(e.clientX-p.x,e.clientY-p.y),hitRadius=Math.max(8,bodyRadiusPx(b)*1.8);if(d<Math.min(md,hitRadius)){md=d;hit=b}}
+ if(hit){
+   focus=hit.id;
+   focusSel.value=hit.id;
+   zoomFactor=1;
+   syncZoom();
+ }
+});
+document.addEventListener('keydown',e=>{if(e.code==='Space'){paused=!paused;pause.textContent=paused?'Play':'Pause'}if(e.key==='p')presentation.click()});
+syncZoom();
+requestAnimationFrame(tick);requestAnimationFrame(render);
+</script>
+</body></html>
